@@ -1,4 +1,3 @@
-# publisher.py
 import Pyro4
 
 def publish_data(data):

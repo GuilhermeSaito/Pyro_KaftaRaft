@@ -1,4 +1,3 @@
-# consumer.py
 import Pyro4
 
 def consume_data():
