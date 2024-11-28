@@ -1,4 +1,10 @@
 # pyro4-ns
+# python broker.py 1 Líder
+# python broker.py 2 Votante
+# python broker.py 3 Votante
+# python broker.py 4 Observador
+# python publisher.py
+# python consumer.py
 
 import Pyro4
 from time import sleep, time
@@ -24,7 +30,8 @@ class Broker:
         self.leader = None
         self.members = []
         self.confirmations = defaultdict(set)
-        self.quorum_size = 0
+        self.quorum_size = 1
+        self.maioria_quorum = 0
         self.heartbeats = {}
         self.lock = Lock()
 
@@ -43,7 +50,8 @@ class Broker:
         member_proxy = Pyro4.Proxy(member_uri)
         self.members.append((state, member_proxy, broker_id))
         if state == "Votante":
-            self.quorum_size = len([s for s, _, _ in self.members if s == "Votante"]) // 2 + 1
+            self.maioria_quorum = len([s for s, _, _ in self.members if s == "Votante"]) // 2 + 1
+            self.quorum_size = self.quorum_size + 1
         print(f"{state} registrado no cluster com ID: {member_uri}")
 
     @Pyro4.expose
@@ -109,7 +117,7 @@ class Broker:
 
         # Verifica quórum
         # quorum = len([state for state, _ in self.members if state == "Votante"]) // 2 + 1
-        if len(self.confirmations[entry_index]) >= self.quorum_size:
+        if len(self.confirmations[entry_index]) >= self.maioria_quorum:
             # Move do log não comprometido para o log comprometido
             data_to_commit = self.uncommited_log[entry_index]
             self.commited_log.append(data_to_commit)
@@ -176,7 +184,7 @@ class Broker:
                 self.members = [element for element in self.members if element[2] != voter_id]
 
             active_voters = [v for v in self.heartbeats.keys()]
-            if len(active_voters) < self.quorum_size:
+            if len(active_voters) < self.maioria_quorum:
                 print(f"Líder {self.broker_id}: Quórum insuficiente. Promovendo observadores.")
                 for state, member, broker_id in self.members:
                     if state == "Observador":
@@ -184,7 +192,7 @@ class Broker:
                             member.promote_to_voter()
                             self.members.remove((state, member, broker_id))
                             self.members.append(("Votante", member, broker_id))
-                            self.quorum_size = len([s for s, _, _ in self.members if s == "Votante"]) // 2 + 1
+                            self.maioria_quorum = len([s for s, _, _ in self.members if s == "Votante"]) // 2 + 1
                             self.notify_promotion(broker_id)
                             print(f"Líder {self.broker_id}: Observador promovido a votante.")
                             break
