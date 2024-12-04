@@ -3,6 +3,8 @@ from time import sleep, time
 from threading import Thread, Lock
 from collections import defaultdict
 
+# Teste
+
 @Pyro4.expose
 class Broker:
     def __init__(self, broker_id, state):
