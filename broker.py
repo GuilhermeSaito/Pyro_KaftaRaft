@@ -112,18 +112,45 @@ class Broker:
         """
             Recebe confirmação de um votante e verifica o quórum.
         """
-        self.confirmations[entry_index].add(voter_id)
-        print(f"Líder {self.broker_id}: Confirmação recebida de votante {voter_id} para índice {entry_index}")
+        with self.lock:
+            self.confirmations[entry_index].add(voter_id)
+            print(f"Líder {self.broker_id}: Confirmação recebida de votante {voter_id} para índice {entry_index}")
 
-        # Verifica quórum
-        # quorum = len([state for state, _ in self.members if state == "Votante"]) // 2 + 1
-        if len(self.confirmations[entry_index]) >= self.maioria_quorum:
-            # Move do log não comprometido para o log comprometido
-            data_to_commit = self.uncommited_log[entry_index]
-            self.commited_log.append(data_to_commit)
-            print(f"Líder {self.broker_id}: Entrada {data_to_commit} comprometida e movida para o log comprometido.")
-            return True
-        return False
+            # Verifica quórum
+            # quorum = len([state for state, _ in self.members if state == "Votante"]) // 2 + 1
+            if len(self.confirmations[entry_index]) >= self.maioria_quorum:
+                # Move do log não comprometido para o log comprometido
+                data_to_commit = self.uncommited_log[entry_index]
+                self.commited_log.append(data_to_commit)
+                print(f"Líder {self.broker_id}: Entrada {data_to_commit} comprometida e movida para o log comprometido.")
+                self.extend_commited_log_member(data_to_commit)
+                return True
+            return False
+    
+    @Pyro4.expose
+    def extend_commited_log_member(self, data_to_commit):
+        """
+            Atualiza o log commitado dos membros quando o log commitado do líder for atualizado
+        """
+        for state, member, _ in self.members:
+            if state == "Votante":
+                print("Tem um votante!")
+                print(self.members)
+                try:
+                    member.update_data_member(data_to_commit)
+                except Pyro4.errors.CommunicationError:
+                    print(f"Erro chamar a função para atualizar o log do {state}.")
+            
+    @Pyro4.expose
+    def update_data_member(self, data_to_commit):
+        """
+            Atualiza o log commitado dos membros quando o log commitado do líder for atualizado
+        """
+        try:
+            self.uncommited_log.extend(data_to_commit)
+            print(f"Votante {self.broker_id}: Entrada {data_to_commit} comprometida e movida para o log comprometido")
+        except Pyro4.errors.CommunicationError:
+            print(f"Erro atualizar o log comprometido do {state}.")
 
     @Pyro4.expose       # Deu erro colocando como oneway aqui
     def notify(self, epoch):
@@ -132,18 +159,18 @@ class Broker:
         """
         if self.state == "Votante":
             print(f"Votante {self.broker_id} notificado pelo líder.")
-            offset = len(self.log)
+            offset = len(self.commited_log)
             response = self.leader.fetch_data(epoch, offset)
             if response.get("error"):
                 print(f"Votante {self.broker_id}: Erro ao buscar dados - {response['message']}")
                 print(f"Maior época: {response['max_epoch']}, Offset final: {response['max_offset']}")
-                self.log = self.log[:response["max_offset"] + 1]
+                self.commited_log = self.commited_log[:response["max_offset"] + 1]
                 print(f"Votante {self.broker_id}: Log truncado até o offset {response['max_offset']}")
                 self.notify(response["max_epoch"], response["max_offset"])
             else:
                 new_data = response["data"]
-                self.log.extend(new_data)
-                print(f"Votante {self.broker_id} atualizou o log: {self.log}")
+                self.uncommited_log.extend(new_data)
+                print(f"Votante {self.broker_id} atualizou o log nao commitado: {self.uncommited_log}")
                 self.leader.confirm_entry(self.broker_id, offset + len(new_data) - 1)
 
     def send_heartbeat(self):
@@ -230,7 +257,7 @@ class Broker:
     def log_sync(self):
         response = self.leader.fetch_data(self.epoch, 0)
         if not response.get("error"):
-            self.log = response["data"]
+            self.commited_log = response["data"]
             print(f"Broker {self.broker_id} sincronizou log com o líder.")
 
     @Pyro4.expose
